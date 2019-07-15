@@ -1,8 +1,8 @@
 PROG =	halo
 
-SRCS =	constants.f90 halo_exchange_module_3d.f90
+SRCS =	constants.f90 halo_exchange_module_3d.f90 test.f90
 
-OBJS =	constants.o halo_exchange_module_3d.o
+OBJS =	constants.o halo_exchange_module_3d.o test.o
 
 LIBS =-lblacs-openmpi -lblacsF77init-openmpi -lscalapack-openmpi -llapack -lblas	
 
@@ -28,3 +28,4 @@ clean:
 	$(F90) $(F90FLAGS) -c $<
 
 halo_exchange_module_3d.o: constants.o
+test.o: 

@@ -68,7 +68,7 @@ Contains
              buffy%recv_buffers( icomm )%dir         = [ i1, i2, i3 ]
              buffy%recv_buffers( icomm )%ilo         = ilo_recv_calc( [ i1, i2, i3 ], ng, width )
              buffy%recv_buffers( icomm )%ihi         = ihi_recv_calc( [ i1, i2, i3 ], ng, width )
-             Associate( ilo => buffy%send_buffers( icomm )%ilo, ihi => buffy%send_buffers( icomm )%ihi )
+             Associate( ilo => buffy%recv_buffers( icomm )%ilo, ihi => buffy%recv_buffers( icomm )%ihi )
                Allocate( buffy%recv_buffers( icomm )%buffer( ilo( 1 ):ihi( 1 ), ilo( 2 ):ihi( 2 ), ilo( 3 ):ihi( 3 ) ) )
              End Associate
           End Do
@@ -101,7 +101,7 @@ Contains
       Integer, Intent( In ) :: n
       Integer, Intent( In ) :: w
 
-      If( dir /= - 1 ) Then
+      If( dir == - 1 ) Then
          ihi = w - 1
       Else
          ihi = n - 1
@@ -153,7 +153,7 @@ Contains
 
   Subroutine exchange( buffy, lb, data )
 
-    Use mpi, Only : MPI_Type_create_f90_real, MPI_Irecv, MPI_Isend, MPI_Waitall, MPI_STATUSES_IGNORE
+    Use mpi, Only : MPI_Type_create_f90_real, MPI_Irecv, MPI_Isend, MPI_Waitall, MPI_STATUSES_IGNORE, MPI_Comm_rank
 
     Class( halo_exchange )                               , Intent( InOut ) :: buffy
     Integer   , Dimension( 1:3 )                         , Intent( In    ) :: lb
@@ -164,30 +164,38 @@ Contains
     Integer, Dimension( : ), Allocatable :: req_list
     
     Integer :: icomm
+    Integer :: me
     Integer :: error
+
+    Call MPI_Comm_rank( buffy%communicator, me, error )
 
     Call MPI_Type_create_f90_real( Precision( data ), Range( data ), datatype, error )
 
+    ! In the following note the signs on the tags - a send in a psoitive direction
+    ! corresponds to a receive from the negative direction
+    
     ! Post the recvs
     Do icomm = 1, Size( buffy%recv_buffers )
        Associate( this_recv =>  buffy%recv_buffers( icomm ) )
          Call MPI_Irecv( this_recv%buffer, Size( this_recv%buffer ), datatype, this_recv%remote_rank, &
-              160467, buffy%communicator, this_recv%request, error )
+              dir_to_tag( 3, -this_recv%dir ), buffy%communicator, this_recv%request, error )
        End Associate
     End Do
 
     ! Do the sends
-    Do icomm = 1, Size( buffy%recv_buffers )
+    Do icomm = 1, Size( buffy%send_buffers )
        Associate( this_send =>  buffy%send_buffers( icomm ) )
+         Associate( ilo => this_send%ilo, ihi => this_send%ihi )
+           this_send%buffer = data( ilo( 1 ):ihi( 1 ), ilo( 2 ):ihi( 2 ), ilo( 3 ):ihi( 3 ) ) 
+         End Associate
          Call MPI_Isend( this_send%buffer, Size( this_send%buffer ), datatype, this_send%remote_rank, &
-              160467, buffy%communicator, this_send%request, error )
+              dir_to_tag( 3, +this_send%dir ), buffy%communicator, this_send%request, error )
        End Associate
     End Do
 
     ! Wait for them to complete
     req_list = [ buffy%recv_buffers( : )%request, buffy%send_buffers( : )%request ]
-    Call MPI_Waitall( Size( buffy%recv_buffers ) + Size( buffy%recv_buffers ), &
-         req_list, MPI_STATUSES_IGNORE, error )
+    Call MPI_Waitall( Size( req_list ), req_list, MPI_STATUSES_IGNORE, error )
 
     ! Now fill in the data from the recvs
     Do icomm = 1, Size( buffy%recv_buffers )
@@ -197,6 +205,21 @@ Contains
          End Associate
        End Associate
     End Do
+
+  Contains
+
+    Pure Function dir_to_tag( base, dir ) Result( tag )
+
+      Integer :: tag
+
+      Integer,                   Intent( In ) :: base
+      Integer, Dimension( 1:3 ), Intent( In ) :: dir
+
+      tag = Dot_product( dir + 1, [ base * base, base, 1 ] )
+
+      tag = tag + 1
+      
+    End Function dir_to_tag
 
   End Subroutine exchange
   
