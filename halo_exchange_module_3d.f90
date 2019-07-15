@@ -153,7 +153,12 @@ Contains
 
   Subroutine exchange( buffy, lb, data )
 
-    Use mpi, Only : MPI_Type_create_f90_real, MPI_Irecv, MPI_Isend, MPI_Waitall, MPI_STATUSES_IGNORE, MPI_Comm_rank
+    ! Note assumes 0: contains the data for this domain, so negative indices and
+    ! above the data for the domain are the halos. May want to think about a cleaner
+    ! interface to this
+
+    Use mpi, Only : MPI_Type_create_f90_real, MPI_Irecv, MPI_Isend, MPI_Waitall, MPI_Waitany, &
+         MPI_UNDEFINED, MPI_STATUS_IGNORE, MPI_STATUSES_IGNORE, MPI_Comm_rank
 
     Class( halo_exchange )                               , Intent( InOut ) :: buffy
     Integer   , Dimension( 1:3 )                         , Intent( In    ) :: lb
@@ -164,10 +169,7 @@ Contains
     Integer, Dimension( : ), Allocatable :: req_list
     
     Integer :: icomm
-    Integer :: me
     Integer :: error
-
-    Call MPI_Comm_rank( buffy%communicator, me, error )
 
     Call MPI_Type_create_f90_real( Precision( data ), Range( data ), datatype, error )
 
@@ -193,18 +195,23 @@ Contains
        End Associate
     End Do
 
-    ! Wait for them to complete
-    req_list = [ buffy%recv_buffers( : )%request, buffy%send_buffers( : )%request ]
-    Call MPI_Waitall( Size( req_list ), req_list, MPI_STATUSES_IGNORE, error )
-
-    ! Now fill in the data from the recvs
-    Do icomm = 1, Size( buffy%recv_buffers )
+    ! Wait for recvs to complete
+    req_list = [ buffy%recv_buffers( : )%request ]
+    ! Wait for each to complete in turn - you never know we might be able
+    ! to overlap the buffer copying with some of the message passing
+    Do
+       Call MPI_Waitany( Size( req_list ), req_list, icomm, MPI_STATUS_IGNORE, error )
+       If( icomm == MPI_UNDEFINED ) Exit
        Associate( this_recv =>  buffy%recv_buffers( icomm ) )
          Associate( ilo => this_recv%ilo, ihi => this_recv%ihi )
            data( ilo( 1 ):ihi( 1 ), ilo( 2 ):ihi( 2 ), ilo( 3 ):ihi( 3 ) ) = this_recv%buffer
          End Associate
        End Associate
     End Do
+
+    ! And finally wait for the sends to complete
+    req_list = [ buffy%send_buffers( : )%request ]
+    Call MPI_Waitall( Size( req_list ), req_list, MPI_STATUSES_IGNORE, error )
 
   Contains
 
